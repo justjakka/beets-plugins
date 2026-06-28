@@ -62,9 +62,7 @@
 
           editablePythonSet = pythonSet.overrideScope editableOverlay;
 
-          virtualenv = editablePythonSet.mkVirtualEnv "beets-plugins" workspace.deps.all;
-
-          inherit (pkgs.callPackages pyproject-nix.build.util { }) mkApplication;
+          virtualenv = editablePythonSet.mkVirtualEnv "beetsplug" workspace.deps.all;
         in
         {
           packages.default = pythonSet.mkVirtualEnv "builder" workspace.deps.default;
@@ -74,8 +72,8 @@
               [
                 nixd
                 nixfmt
-                pyright
                 ruff
+                ty
                 uv
               ]
               ++ virtualenv.buildInputs;
