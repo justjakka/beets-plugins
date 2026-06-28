@@ -65,10 +65,7 @@
           virtualenv = editablePythonSet.mkVirtualEnv "beetsplug" workspace.deps.all;
         in
         {
-          packages.default = pkgs.callPackage ./package.nix {
-            inherit (pkgs.python3Packages) buildPythonPackage mediafile beets-minimal;
-            uv-build = pythonSet.uv-build or pkgs.uv;
-          };
+          packages.default = pythonSet.mkVirtualEnv "plugins-build" workspace.deps.default;
           devShells.default = pkgs.mkShell {
             packages =
               with pkgs;
