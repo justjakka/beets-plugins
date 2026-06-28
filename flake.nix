@@ -66,7 +66,7 @@
         in
         {
           packages.default = pkgs.callPackage ./package.nix {
-            inherit (pkgs.python313Packages) buildPythonPackage mediafile beets-minimal;
+            inherit (pkgs.python3Packages) buildPythonPackage mediafile beets-minimal;
             uv-build = pythonSet.uv-build or pkgs.uv;
           };
           devShells.default = pkgs.mkShell {
