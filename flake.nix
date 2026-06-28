@@ -35,40 +35,39 @@
         "aarch64-linux"
       ];
       perSystem =
-        {
-          system,
-          pkgs,
-          lib,
-          ...
-        }:
+        { pkgs, lib, ... }:
         let
           workspace = uv2nix.lib.workspace.loadWorkspace { workspaceRoot = ./.; };
-          overlay = workspace.mkPyprojectOverlay {
-            sourcePreference = "wheel";
-          };
-          editableOverlay = workspace.mkEditablePyprojectOverlay {
-            root = "$REPO_ROOT";
-          };
+          overlay = workspace.mkPyprojectOverlay { sourcePreference = "wheel"; };
           python = lib.head (
             pyproject-nix.lib.util.filterPythonInterpreters {
               inherit (workspace) requires-python;
               inherit (pkgs) pythonInterpreters;
             }
           );
-          pythonSets =
-            (pkgs.callPackage pyproject-nix.build.packages {
-              inherit python;
-            }).overrideScope
-              (
-                lib.composeManyExtensions [
-                  pyproject-build-systems.overlays.wheel
-                  overlay
-                ]
-              );
-          pythonSet = pythonSets.${system}.overrideScope editableOverlay;
-          virtualenv = pythonSet.mkVirtualEnv "beets-plugins" workspace.deps.all;
+          pythonBase = pkgs.callPackage pyproject-nix.build.packages { inherit python; };
+          pyprojectOverrides = final: prev: {
+            numba = prev.numba.overrideAttrs (old: {
+              buildInputs = (old.buildInputs or [ ]) ++ [ pkgs.tbb ];
+            });
+          };
+          pythonSet = pythonBase.overrideScope (
+            lib.composeManyExtensions [
+              pyproject-build-systems.overlays.wheel
+              overlay
+              pyprojectOverrides
+            ]
+          );
+          editableOverlay = workspace.mkEditablePyprojectOverlay { root = "$REPO_ROOT"; };
+
+          editablePythonSet = pythonSet.overrideScope editableOverlay;
+
+          virtualenv = editablePythonSet.mkVirtualEnv "beets-plugins" workspace.deps.all;
+
+          inherit (pkgs.callPackages pyproject-nix.build.util { }) mkApplication;
         in
         {
+          packages.default = pythonSet.mkVirtualEnv "builder" workspace.deps.default;
           devShells.default = pkgs.mkShell {
             packages =
               with pkgs;
@@ -79,7 +78,7 @@
                 ruff
                 uv
               ]
-              ++ virtualenv;
+              ++ virtualenv.buildInputs;
             env = {
               UV_NO_SYNC = "1";
               UV_PYTHON = pythonSet.python.interpreter;

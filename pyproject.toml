@@ -1,7 +1,7 @@
 [project]
 name = "beets-plugins"
 version = "0.1.0"
-description = "Add your description here"
+description = "flake for my beets plugins"
 readme = "README.md"
 authors = [
     { name = "jakka", email = "jakka@jakka.foo" }
