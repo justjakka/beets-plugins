@@ -6,6 +6,6 @@ class Event(BeetsPlugin):
     def __init__(self):
         super().__init__()
         field = mediafile.MediaField(
-            mediafile.MP3DescStorageStyle("event"), mediafile.StorageStyle("event")
+            mediafile.MP3DescStorageStyle("EVENT"), mediafile.StorageStyle("EVENT")
         )
         self.add_media_field("event", field)
