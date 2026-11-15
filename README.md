@@ -41,3 +41,31 @@ with the same name:
   release directory to scan.
 - When multiple imported albums share one source directory, only the first album
   processes that directory to avoid moving files into the wrong album.
+
+## event
+
+Adds a custom `event` field to beets items and synchronizes it with the media file
+tags. Useful for tagging releases by event, convention, festival, or similar.
+
+### Configuration
+
+```yaml
+plugins: event
+```
+
+The field is available like any other beets field:
+
+```sh
+beet modify event:"Some Event" album:Example
+beet ls -f '$artist - $title [$event]'
+```
+
+Example path format:
+
+```yaml
+paths:
+  default: $albumartist/$album [$event]/$track - $title
+```
+
+On MP3 files the value is stored in the `TXXX:EVENT` ID3 frame. Other formats use
+their native `EVENT` tag when supported by `mediafile`.
