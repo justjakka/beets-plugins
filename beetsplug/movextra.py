@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from typing import Any
 
     from beets.importer import ImportSession, ImportTask
-    from beets.library import Library
+    from beets.library import Item, Library
 
 DuplicateAction = Literal["merge", "skip", "keep", "remove"]
 
@@ -41,6 +41,16 @@ class MoveJob:
     operation: MoveOperation
     delete_source: bool
     is_reimport: bool
+
+
+@dataclass(frozen=True)
+class ItemMove:
+    """A file operation beets performed outside of an import."""
+
+    album_id: int | None
+    source: Path
+    destination: Path
+    operation: MoveOperation
 
 
 def _to_path(path: Any) -> Path:
@@ -73,6 +83,8 @@ class MovextraPlugin(BeetsPlugin):
 
         self._lock = threading.Lock()
         self._jobs: list[MoveJob] = []
+        self._item_moves: list[ItemMove] = []
+        self._import_active = False
         self._imported_paths: set[Path] = set()
         self._task_sources: dict[int, tuple[Path, ...]] = {}
         self._toppath_roots: dict[Path, set[Path]] = {}
@@ -80,13 +92,20 @@ class MovextraPlugin(BeetsPlugin):
         self.register_listener("import_begin", self._on_import_begin)
         self.register_listener("import_task_created", self._on_task_created)
         self.register_listener("import_task_files", self._on_task_files)
+        self.register_listener("item_moved", self._on_item_moved)
+        self.register_listener("item_copied", self._on_item_copied)
+        self.register_listener("item_linked", self._on_item_linked)
+        self.register_listener("item_hardlinked", self._on_item_hardlinked)
+        self.register_listener("item_reflinked", self._on_item_reflinked)
         self.register_listener("cli_exit", self._on_cli_exit)
 
     def _on_import_begin(self, session: ImportSession) -> None:
         """Reset state at the start of an import session."""
         del session
         with self._lock:
+            self._import_active = True
             self._jobs.clear()
+            self._item_moves.clear()
             self._imported_paths.clear()
             self._task_sources.clear()
             self._toppath_roots.clear()
@@ -173,20 +192,59 @@ class MovextraPlugin(BeetsPlugin):
             for import_path in session.paths
         )
 
+    def _on_item_moved(self, item: Item, source: Any, destination: Any) -> None:
+        self._record_item_move(item, source, destination, MoveOperation.MOVE)
+
+    def _on_item_copied(self, item: Item, source: Any, destination: Any) -> None:
+        self._record_item_move(item, source, destination, MoveOperation.COPY)
+
+    def _on_item_linked(self, item: Item, source: Any, destination: Any) -> None:
+        self._record_item_move(item, source, destination, MoveOperation.LINK)
+
+    def _on_item_hardlinked(self, item: Item, source: Any, destination: Any) -> None:
+        self._record_item_move(item, source, destination, MoveOperation.HARDLINK)
+
+    def _on_item_reflinked(self, item: Item, source: Any, destination: Any) -> None:
+        self._record_item_move(item, source, destination, MoveOperation.REFLINK_AUTO)
+
+    def _record_item_move(
+        self,
+        item: Item,
+        source: Any,
+        destination: Any,
+        operation: MoveOperation,
+    ) -> None:
+        """Remember a move performed outside an import, such as by ``beet mv``."""
+        if self._import_active:
+            return
+
+        with self._lock:
+            self._item_moves.append(
+                ItemMove(
+                    album_id=getattr(item, "album_id", None),
+                    source=_to_path(source),
+                    destination=_to_path(destination),
+                    operation=operation,
+                )
+            )
+
     def _on_cli_exit(self, lib: Library) -> None:
-        """Process all queued jobs once the import has finished."""
+        """Process queued imports and file moves once the command has finished."""
         with self._lock:
             jobs = list(self._jobs)
+            item_moves = list(self._item_moves)
             imported_paths = set(self._imported_paths)
             toppath_roots = {
                 toppath: set(roots) for toppath, roots in self._toppath_roots.items()
             }
+            self._import_active = False
             self._jobs.clear()
+            self._item_moves.clear()
             self._imported_paths.clear()
             self._task_sources.clear()
             self._toppath_roots.clear()
 
-        if not jobs:
+        if not jobs and not item_moves:
             return
 
         library_root = _to_path(lib.directory)
@@ -256,6 +314,107 @@ class MovextraPlugin(BeetsPlugin):
                 operation=job.operation,
                 delete_source=job.delete_source,
                 is_reimport=job.is_reimport,
+                duplicate_action=duplicate_action,
+            )
+
+        self._process_item_moves(
+            lib=lib,
+            moves=item_moves,
+            library_root=library_root,
+            duplicate_action=duplicate_action,
+            processed_roots=processed_roots,
+        )
+
+    def _process_item_moves(
+        self,
+        lib: Library,
+        moves: list[ItemMove],
+        library_root: Path,
+        duplicate_action: DuplicateAction,
+        processed_roots: list[Path],
+    ) -> None:
+        """Move the remaining album contents after a move outside an import.
+
+        This covers workflows such as ``beet import .`` followed by ``beet mv``,
+        where the import leaves files in place and the actual move happens in a
+        separate command.
+        """
+        if not moves:
+            return
+
+        groups: dict[tuple[str, object], list[ItemMove]] = {}
+        for move in moves:
+            key: tuple[str, object]
+            if move.album_id is not None:
+                key = ("album", move.album_id)
+            else:
+                key = ("item", move.source.parent)
+            groups.setdefault(key, []).append(move)
+
+        library_paths = tuple(_to_path(item.path) for item in lib.items())
+
+        for group in groups.values():
+            sources = tuple(move.source for move in group)
+            destinations = tuple(move.destination for move in group)
+            source_root = _common_parent(sources)
+            destination_root = _common_parent(destinations)
+            operation = group[0].operation
+
+            if source_root is None or destination_root is None:
+                continue
+            if source_root == destination_root:
+                continue
+            if source_root == library_root:
+                self._log.debug("Not scanning the library root for release files.")
+                continue
+            if not source_root.exists():
+                continue
+            if destination_root == library_root:
+                destination_root = destinations[0].parent
+            if destination_root.is_relative_to(source_root):
+                self._log.warning(
+                    "Destination {} is inside release root {}; skipping.",
+                    destination_root,
+                    source_root,
+                )
+                continue
+
+            # Only act when the album moved as a unit. If a library item still
+            # points into the source directory, the move was partial and the
+            # remaining audio must stay where it is.
+            if any(path.is_relative_to(source_root) for path in library_paths):
+                self._log.debug(
+                    "Not moving extras for partial move of {}.",
+                    source_root,
+                )
+                continue
+
+            conflicting_root = next(
+                (
+                    root
+                    for root in processed_roots
+                    if root == source_root
+                    or root.is_relative_to(source_root)
+                    or source_root.is_relative_to(root)
+                ),
+                None,
+            )
+            if conflicting_root is not None:
+                self._log.warning(
+                    "Skipping release root {}: it overlaps already processed root {}.",
+                    source_root,
+                    conflicting_root,
+                )
+                continue
+
+            processed_roots.append(source_root)
+            self._process_release(
+                source_root=source_root,
+                destination_root=destination_root,
+                imported_paths=set(sources),
+                operation=operation,
+                delete_source=False,
+                is_reimport=False,
                 duplicate_action=duplicate_action,
             )
 

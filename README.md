@@ -4,11 +4,13 @@ A collection of plugins for [beets](https://beets.io/).
 
 ## movextra
 
-Moves the remaining contents of an imported release into the imported music's
-destination directory. Beets still handles the audio; `movextra` handles everything
-else, including files that beets otherwise ignores.
+Moves the remaining contents of a release into the imported music's destination
+directory. Beets still handles the audio; `movextra` handles everything else,
+including files that beets otherwise ignores.
 
-- Follows the active import operation: `move`, `copy`, `link`, `hardlink`, or `reflink`.
+- Follows the active operation: `move`, `copy`, `link`, `hardlink`, or `reflink`.
+- Works after `beet import` and after a separate `beet mv` (including the
+  `beet import .` + `beet mv` workflow with `import.move`/`import.copy` disabled).
 - Never touches audio files that beets imported.
 - Preserves subdirectories, so `Scans/front.jpg` stays under `Scans/`.
 - Handles album and single-track imports.
@@ -35,6 +37,9 @@ with the same name:
 ### Behavior notes
 
 - With `import.copy` plus `import.delete`, source extras are removed after copying.
+- A separate `beet mv` moves or copies the remaining release contents alongside
+  the audio. Partial moves (for example, moving only one track of an album) leave
+  the extras in place.
 - Reimports behave like beets reimports: copy/link operations are treated as moves for
   files already inside the library.
 - Query-based imports (`beet import -L ...`) are not handled because they have no
