@@ -1,11 +1,7 @@
-import logging
-
 import mediafile
 import mutagen
 from beets import util
 from beets.plugins import BeetsPlugin
-
-log = logging.getLogger("beets.genrefix")
 
 
 class Event(BeetsPlugin):
@@ -38,13 +34,8 @@ class Event(BeetsPlugin):
     def on_write(self, item, path, tags):
         try:
             current_genres = self._read_genres(item)
-        except Exception as exc:
-            log.debug(f"Could not read tags from {path}: {exc}")
+        except Exception:
             return
 
-        old_genres = item.get("genres", [])
         item["genres"] = current_genres
-        log.info(
-            f"Updated genres for '{item.title}' from {old_genres} to {current_genres}"
-        )
         item.store()
